@@ -1,3 +1,16 @@
+> ⚠️ **EXPERIMENTAL — USE EXTREME CAUTION** ⚠️
+>
+> This project is **experimental** and ships with **NO safeguards**: no
+> confirmations, no allow-lists, no read-only mode, no path-traversal checks,
+> no destructive-action limits. It grants an LLM full unrestricted control of
+> your Home Assistant host, the recorder database, the file system, the Docker
+> socket, the network, and any credentials you give it.
+>
+> **Run only on trusted networks, against test instances, and at your own
+> risk.** You can lose data, brick your add-ons, leak secrets, or worse. Do
+> not use against a production household without fully understanding every
+> tool exposed.
+
 # HASS MCP
 
 Home Assistant add-on exposing a Model Context Protocol (MCP) server with
