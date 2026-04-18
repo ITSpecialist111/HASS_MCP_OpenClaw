@@ -1,6 +1,6 @@
 name: "HASS MCP Server"
 description: "Unrestricted MCP control plane for Home Assistant - full Core, Supervisor, OS, Add-on, file, DB, shell, and Docker access."
-version: "2.1.0"
+version: "2.2.0"
 slug: "hass_mcp_server"
 url: "https://github.com/voska/hass-mcp"
 init: false
