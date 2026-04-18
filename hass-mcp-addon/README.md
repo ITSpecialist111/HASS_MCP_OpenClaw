@@ -267,6 +267,77 @@ The add-on exposes port **8080** by default. Make sure this port is accessible f
 - **Same network**: Use `http://<ha-ip>:8080`
 - **Remote access**: Use a reverse proxy or VPN (do NOT expose port 8080 directly to the internet without TLS)
 
+> The container always listens on **8080 internally**. If you change the host
+> port in *Settings → Add-ons → HASS MCP Server → Network*, the mapping must be
+> `<your-host-port> → 8080`.
+
+### Connecting from VS Code (verified working)
+
+VS Code's built-in MCP client reads `mcp.json` from your user profile
+(`%APPDATA%\Code\User\mcp.json` on Windows,
+`~/.config/Code/User/mcp.json` on Linux/macOS).
+
+Use this configuration — it is the exact one verified against this add-on:
+
+```json
+{
+  "inputs": [
+    {
+      "id": "ha-token",
+      "type": "promptString",
+      "description": "HA long-lived token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "home-assistant": {
+      "type": "http",
+      "url": "http://<ha-ip>:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:ha-token}"
+      }
+    }
+  }
+}
+```
+
+Replace `<ha-ip>` with your Home Assistant host's LAN IP (e.g.
+`192.168.1.10`). The `${input:ha-token}` placeholder makes VS Code prompt you
+for the token on first connect and store it in the OS secret store.
+
+**Steps:**
+
+1. In Home Assistant: *Profile → Security → Long-Lived Access Tokens →
+   Create Token*. Copy it.
+2. Paste the same token into the add-on's `ha_token` option and restart the
+   add-on.
+3. Save the JSON above into `mcp.json`. Adjust the IP and (if needed) the
+   port to match your add-on's host-side port mapping.
+4. In VS Code, open the Command Palette → **MCP: List Servers** →
+   `home-assistant` → **Start** (or **Restart**). Paste the token when
+   prompted.
+5. Sanity-check from your VS Code machine before debugging the client:
+   ```powershell
+   curl http://<ha-ip>:8080/health
+   curl http://<ha-ip>:8080/info
+   ```
+   `/health` should return `{"status":"ok","ha":{"connected":true,...}}`.
+
+**Common errors:**
+
+| Symptom | Likely cause |
+|---|---|
+| `TypeError: fetch failed` / `ECONNREFUSED` | Wrong port (must be the host-side mapping that points at container port 8080), wrong IP, or HA host firewall. |
+| `401 Unauthorized` | `ha_token` in the add-on config does not match the token in your `Authorization: Bearer …` header. |
+| `Application shutdown complete` loop in add-on logs | Normal — every disconnect by an MCP client tears down the FastAPI session; the add-on respawns automatically. |
+
+### Connecting from OpenClaw / other MCP clients
+
+```
+Server URL:     http://<ha-ip>:8080/mcp
+Authentication: Bearer <your-long-lived-token>
+```
+
 ---
 
 ## API Endpoints
