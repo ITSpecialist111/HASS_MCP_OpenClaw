@@ -19,9 +19,16 @@ Home Assistant UI, the Supervisor panel, the recorder DB, the file editor,
 the host shell, the Docker socket, the radios, and assorted attached
 hardware / SaaS accounts.
 
-- **608 tools** across **50 modules** (auto-counted from
+- **620 tools** across **51 modules** (auto-counted from
   [hass-mcp-addon/app/tools/](hass-mcp-addon/app/tools)).
-- Streamable HTTP (`/mcp`) and legacy SSE (`/sse`) transports.
+- **Two endpoints** served from the same add-on:
+  - `/mcp` — full surface (every tool individually). Use with OpenClaw,
+    Claude Desktop, Cursor, or any client without a tool-count limit.
+  - `/compact/mcp` — **dispatcher surface (~52 tools)**. One tool per
+    module + a top-level `hass_modules` discovery tool. Use this with
+    **GitHub Copilot** (128-tool client cap). Nothing is disabled — every
+    underlying tool is reachable as `module(action="...", args={...})`.
+- Streamable HTTP (`/mcp`, `/compact/mcp`) and legacy SSE (`/sse`).
 - Auth via `Authorization: Bearer <ha-long-lived-token>`,
   `X-API-Key`, or `?api_key=`.
 - Runs as a standard local HA add-on — see
@@ -65,7 +72,7 @@ hardware / SaaS accounts.
 
 ---
 
-## Verbose tool inventory (608 tools, 50 modules)
+## Verbose tool inventory (620 tools, 51 modules)
 
 > Auto-extracted from `@tool(mcp)`-decorated callables in
 > [hass-mcp-addon/app/tools/](hass-mcp-addon/app/tools).
@@ -87,6 +94,13 @@ hardware / SaaS accounts.
 `list_labels_full`, `create_label`, `update_label`, `delete_label`,
 `assign_label_to_entity`, `remove_label_from_entity`, `list_categories`,
 `create_category`, `delete_category`, `create_zone`
+
+### `audit` (12)
+`list_pending_updates`, `install_update`, `install_all_updates`,
+`skip_update`, `audit_unavailable_breakdown`, `audit_broken_automations`,
+`audit_dead_scripts`, `audit_orphan_helpers`, `audit_duplicate_automations`,
+`cleanup_dead_automations`, `cleanup_dead_scripts`,
+`cleanup_orphan_entities_by_pattern`, `full_health_audit`
 
 ### `automations` (26)
 `list_automations_full`, `get_automation_yaml`, `create_automation`,

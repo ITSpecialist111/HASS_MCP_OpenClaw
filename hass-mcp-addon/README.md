@@ -277,6 +277,12 @@ VS Code's built-in MCP client reads `mcp.json` from your user profile
 (`%APPDATA%\Code\User\mcp.json` on Windows,
 `~/.config/Code/User/mcp.json` on Linux/macOS).
 
+> GitHub Copilot caps the visible MCP tool list at **128**. The full `/mcp`
+> endpoint exposes ~620 tools, so Copilot will refuse to start with
+> `Tool limit exceeded`. Point Copilot at **`/compact/mcp`** instead — it
+> serves a dispatcher surface (~52 tools, one per module) that exposes
+> *every* underlying capability via `module(action="...", args={...})`.
+
 Use this configuration — it is the exact one verified against this add-on:
 
 ```json
@@ -292,7 +298,7 @@ Use this configuration — it is the exact one verified against this add-on:
   "servers": {
     "home-assistant": {
       "type": "http",
-      "url": "http://<ha-ip>:8080/mcp",
+      "url": "http://<ha-ip>:8080/compact/mcp",
       "headers": {
         "Authorization": "Bearer ${input:ha-token}"
       }
@@ -304,6 +310,22 @@ Use this configuration — it is the exact one verified against this add-on:
 Replace `<ha-ip>` with your Home Assistant host's LAN IP (e.g.
 `192.168.1.10`). The `${input:ha-token}` placeholder makes VS Code prompt you
 for the token on first connect and store it in the OS secret store.
+
+For OpenClaw, Claude Desktop, Cursor or other clients without a tool-count
+cap, use the full surface instead:
+
+```
+http://<ha-ip>:8080/mcp
+```
+
+**Using the compact surface from an LLM:**
+
+1. The agent calls `hass_modules()` → JSON list of all modules and how many
+   actions each one has.
+2. The agent calls `<module>(action="list")` (e.g. `supervisor(action="list")`)
+   → JSON array of every action in that module with its parameter schema.
+3. The agent invokes a specific action:
+   `supervisor(action="create_full_backup", args={"name":"pre-cleanup"})`.
 
 **Steps:**
 
