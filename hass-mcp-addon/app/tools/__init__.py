@@ -58,6 +58,7 @@ _MODULES = [
     "multimodal",     # §58
     "agency",         # §59
     "legal_edge",     # §60
+    "audit",          # convenience: high-level audit + cleanup
 ]
 
 

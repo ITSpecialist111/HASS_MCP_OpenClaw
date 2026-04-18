@@ -1,6 +1,6 @@
 name: "HASS MCP Server"
 description: "Unrestricted MCP control plane for Home Assistant - full Core, Supervisor, OS, Add-on, file, DB, shell, and Docker access."
-version: "2.3.0"
+version: "2.4.0"
 slug: "hass_mcp_server"
 url: "https://github.com/ITSpecialist111/HASS_MCP_OpenClaw"
 init: false
