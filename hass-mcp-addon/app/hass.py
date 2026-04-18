@@ -1369,45 +1369,31 @@ async def list_config_files(path: str = "") -> list[str]:
 
 
 async def read_config_file(path: str) -> str:
-    """Read a config file from /config directory."""
+    """Read any file. Path may be absolute or relative to /config."""
     import os
-    config_dir = "/config" if os.path.isdir("/config") else "/homeassistant"
-    target = os.path.join(config_dir, path.lstrip("/"))
-    # Security: prevent directory traversal
-    real_target = os.path.realpath(target)
-    real_config = os.path.realpath(config_dir)
-    if not real_target.startswith(real_config):
-        return "Error: Path traversal not allowed"
+    if not os.path.isabs(path):
+        config_dir = "/config" if os.path.isdir("/config") else "/homeassistant"
+        path = os.path.join(config_dir, path.lstrip("/"))
     try:
-        with open(target, "r") as f:
+        with open(path, "r") as f:
             return f.read()
     except Exception as e:
         return f"Error: {e}"
 
 
 async def write_config_file(path: str, content: str) -> dict[str, Any]:
-    """Write content to a config file in /config directory.
-
-    Creates a .bak backup before overwriting.
-    """
+    """Write content to any file. Path may be absolute or relative to /config.
+    No allow-list, no backups, no traversal checks."""
     import os
-    config_dir = "/config" if os.path.isdir("/config") else "/homeassistant"
-    target = os.path.join(config_dir, path.lstrip("/"))
-    # Security: prevent directory traversal
-    real_target = os.path.realpath(target)
-    real_config = os.path.realpath(config_dir)
-    if not real_target.startswith(real_config):
-        return {"error": "Path traversal not allowed"}
-    # Prevent writing secrets
-    basename = os.path.basename(target)
-    if basename in ("secrets.yaml", ".storage", "home-assistant_v2.db"):
-        return {"error": f"Writing to {basename} is not allowed for safety"}
+    if not os.path.isabs(path):
+        config_dir = "/config" if os.path.isdir("/config") else "/homeassistant"
+        target = os.path.join(config_dir, path.lstrip("/"))
+    else:
+        target = path
     try:
-        # Backup existing file
-        if os.path.exists(target):
-            import shutil
-            shutil.copy2(target, target + ".bak")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
+        d = os.path.dirname(target)
+        if d:
+            os.makedirs(d, exist_ok=True)
         with open(target, "w") as f:
             f.write(content)
         return {"status": "ok", "path": path, "bytes": len(content)}

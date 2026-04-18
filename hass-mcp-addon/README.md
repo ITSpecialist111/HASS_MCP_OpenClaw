@@ -1,3 +1,146 @@
+# HASS MCP — v2.0 (full-control)
+
+A Home Assistant add-on that exposes a **massive** Model Context Protocol (MCP)
+surface over HTTP/SSE so an LLM agent can drive **everything** an admin can do
+from the HA UI, the Supervisor panel, the recorder DB, the file editor, the
+SSH/web-terminal add-on, and the Docker socket — **without restrictions**.
+
+> ⚠️ **No safeguards.** No allow-lists, no read-only mode, no path-traversal
+> checks, no destructive-action confirmations, no rate limiting. By design.
+> Run only on trusted networks; protect with `ha_token` API key.
+
+## What changed in 2.0
+
+| Area | v1.x | v2.0 |
+|------|------|------|
+| Tool count | ~60 | **~470** |
+| Transports used | REST | REST + WebSocket + Supervisor + SQLite + docker.sock + shell |
+| Permissions | minimal | `hassio_role: admin`, `host_pid`, `host_dbus`, `host_network`, `full_access`, all maps `:rw`, privileged caps |
+| File access | `/config` only, allow-list, traversal-blocked | anywhere, no checks |
+| DB access | none | full SQL on recorder DB (incl. write/vacuum/repack) |
+| Shell access | none | `shell_exec`, `python_exec`, `pip_install`, `apk_add`, SSH |
+| Docker access | none | full docker-py wrappers + docker_run |
+| Streaming | none | event/trigger subscriptions with buffered reads |
+
+## Tool modules (`app/tools/`)
+
+| Module | § | Tools |
+|--------|---|-------|
+| `raw` | 41 | 4 — escape hatches: `ws_raw`, `rest_raw`, `supervisor_raw`, `service_call_raw` |
+| `entities` | 2 | 13 — full entity registry CRUD + bulk + purge orphans |
+| `devices` | 3 | 5 — incl. `merge_devices` |
+| `config_entries` | 4 | 15 — config flow surface |
+| `areas` | 5 | 19 — areas/floors/labels/categories/zones |
+| `supervisor` | 6 | 70 — addons / store / supervisor / core / OS / host / network / DNS / audit / backups / mounts / resolution / docker / audio / CLI / multicast / observer |
+| `automations` | 7 | 25 — automations/scripts/scenes/helpers/blueprints |
+| `dashboards` | 8 | 11 |
+| `frontend` | 9 | 6 |
+| `recorder` | 10 | 11 |
+| `energy` | 11 | 5 |
+| `templates` | 12 | 5 |
+| `events` | 13 | 4 |
+| `users` | 14 | 13 |
+| `mqtt` | 15 | 5 |
+| `radios` | 16 | 27 — Z2M + Z-Wave JS + Matter + Thread |
+| `esphome` | 17 | 8 |
+| `frigate` | 18 | 10 |
+| `media` | 19 | 9 — camera/media_player/tts/stt/wake_word |
+| `notify` | 20 | 6 |
+| `mobile` | 21 | 5 |
+| `tags` | 22 | 5 |
+| `calendar_todo` | 23-24 | 7 |
+| `files` | 25 | 23 — read/write/move/delete anywhere; git included |
+| `database` | 26 | 6 — `sql_query`, `sql_exec`, `sql_schema`, `sql_vacuum`, `db_size`, `recorder_purge_orphans` |
+| `network` | 27 | 9 — ping/traceroute/dns/port_scan/http_request/wol/ssh_exec/arp/speedtest |
+| `shell_tools` | 28 | 12 |
+| `docker_tools` | 29 | 14 |
+| `hacs` | 30 | 7 |
+| `cloud` | 31 | 12 |
+| `voice` | 32 | 11 |
+| `ai` | 33 | 6 |
+| `octopus` | 34 | 4 |
+| `energy_vendors` | 35 | 13 — FoxESS / Zappi / SAIC |
+| `observability` | 36 | 5 — Prometheus / InfluxDB / Grafana |
+| `translations` | 37 | 3 |
+| `search` | 38 | 4 — `global_search`, `find_unused`, `find_dependencies`, `find_broken_references` |
+| `bulk` | 39 | 10 — cleanup / mass-rename / mass-purge / `audit_report` |
+| `streams` | 40 | 4 — buffered subscription handles |
+
+The pre-existing **60 tools** in `app/server.py` remain registered as well.
+
+## Architecture
+
+```
+app/
+├── __main__.py
+├── config.py
+├── transport.py          # Starlette wrapper, /health /info, optional API key
+├── server.py             # FastMCP instance + 60 v1 tools, then register_all()
+├── hass.py               # REST client (path/secret guards stripped)
+├── ws_client.py          # async WebSocket with auto-reconnect & subscriptions
+├── supervisor_client.py  # Supervisor REST helper
+├── shell.py              # shell/python/pip/apk runners
+├── sql.py                # SQLAlchemy bridge to recorder DB
+├── docker_client.py      # docker-py wrappers
+└── tools/
+    ├── __init__.py       # _MODULES list + register_all(mcp)
+    ├── _helpers.py       # tool() decorator + jdump/safe
+    └── <39 modules>      # see table above
+```
+
+## Add-on permissions (`config.yaml`)
+
+```yaml
+hassio_role: admin
+host_pid: true
+host_network: true
+host_dbus: true
+host_ipc: true
+docker_api: true
+auth_api: true
+full_access: true
+privileged:
+  - SYS_ADMIN
+  - SYS_RAWIO
+  - DAC_READ_SEARCH
+  - NET_ADMIN
+  - NET_RAW
+map:
+  - config:rw
+  - addons:rw
+  - share:rw
+  - media:rw
+  - ssl:rw
+  - backup:rw
+```
+
+## Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET    | `/health` | HA reachability check (public) |
+| GET    | `/info`   | Version / transports (public) |
+| POST   | `/mcp`    | Streamable HTTP transport |
+| GET/POST | `/sse`, `/messages/` | SSE transport |
+
+Auth: `Authorization: Bearer <ha_token>` / `X-API-Key:` / `?api_key=`. If
+`ha_token` is unset in add-on options, **all requests are unauthenticated**.
+
+## Environment
+
+Set in `run.sh`:
+
+- `HA_URL` = `http://supervisor/core/api`
+- `HA_WS_URL` = `ws://supervisor/core/websocket`
+- `SUPERVISOR_URL` = `http://supervisor`
+- `RECORDER_DB` = `/config/home-assistant_v2.db`
+- `HA_TOKEN` = Supervisor token (passed in by HA)
+
+## Build / install
+
+This is a Home Assistant **local add-on**. Drop the `hass-mcp-addon/` folder
+into your `/addons/` directory and install via *Settings → Add-ons → Local
+add-ons*. Configure `ha_token` (recommended) and start.
 # HASS MCP Server - Home Assistant Add-on
 
 A powerful **Model Context Protocol (MCP)** server that runs as a Home Assistant add-on, enabling AI assistants to interact with, query, and control your Home Assistant instance.
@@ -542,3 +685,44 @@ The server starts on port 8080 by default.
 ## License
 
 MIT
+
+
+---
+
+# Part II — God Mode (v2.1, +~110 tools, ~580 total)
+
+Implements §§50–63 of the plan. **Even fewer guard rails.** Tools in this
+section reach beyond the HA host into routers, NAS, hypervisors, vehicles,
+banks, neighbours' RF, and the MCP server's own source code.
+
+| Module | § | Tools |
+|--------|---|-------|
+| `persistence` | 50 | 7 — watchdog, dead-man switch, OOB recovery, token rotation, IPMI, peer replication |
+| `infra` | 51 | 13 — router REST/SSH, AdGuard/Pi-hole, DHCP, WireGuard, Tailscale, Cloudflare, NAS, Proxmox, vSphere, FRR/Bird, 802.1X |
+| `saas` | 52 | 15 — generic vendor pass-throughs (Octopus, Google, Apple, MS Graph, Alexa, music, appliances, vehicles, cameras, Frigate+, LLM billing) + credential vault |
+| `hardware` | 53 | 16 — serial, GPIO, I²C, SPI, BT, GATT, IR, RTL-SDR, rtl_433, uhubctl, smart-PDU, acoustic |
+| `identity` | 54 | 15 — Bitwarden, 1Password, KeePass, YubiKey, internal PKI CA, OAuth impersonation, SMTP/IMAP, TOTP, SMS in/out, voice calls, e-sign |
+| `physical` | 55 | 11 — ONVIF PTZ + talkback, lock codes, intercoms, vehicle commands, Tesla owner API, irrigation, solar curtailment, Open Banking, battery arbitrage |
+| `forensics` | 56 | 11 — pcap capture & summary, AdGuard log tap, NetFlow, camera LLM inference, vector memory (sqlite, hashing-trick), z-score anomaly, presence fusion |
+| `selfmod` | 57 | 11 — read/edit own source, hot-reload modules, synthesize new tool modules at runtime, run pytest, rsync clone to peer, propose PR, rebuild/restart self, list loaded tools |
+| `multimodal` | 58 | 5 — display takeover, mass notify all humans, voice clone (ElevenLabs/XTTS), avatar push to dashboard, AR overlay push |
+| `agency` | 59 | 17 — recurring task scheduler, persistent goal loops with history, sub-agent dispatch (conversation/process), human-in-loop with timeout auto-approve, external MCP marketplace proxy, inter-home federation |
+| `legal_edge` | 60 | 6 — Wi-Fi probe scan, RTL-SDR neighbourhood capture, PSD2 PIS payment, social media post, autonomous purchase, gov form submit |
+
+**State files** (all under `/data/` so they survive add-on restarts):
+- `/data/persistence/tokens.json` — rotated long-lived tokens
+- `/data/persistence/dms.key` — Fernet key for dead-man's switch
+- `/data/saas_creds.json` — vendor credential vault (chmod 600)
+- `/data/totp.json` — TOTP seeds
+- `/data/pki/` — internal CA + issued certs
+- `/data/vector_memory.sqlite` — recall store
+- `/data/agency.json` — scheduled tasks, goals, sub-agents, MCP proxies, peers
+
+**Highest-impact six** (per §62 of the plan):
+1. `watchdog_companion` + `dead_mans_switch` — survives its own destruction
+2. `pdu_outlet_control` + `router_request` — can recover the network
+3. `schedule_task` + `set_goal` — autonomous operation
+
+**Legal note:** The `legal_edge` module is implemented as raw HTTP/shell
+pass-throughs. Use under UK RIPA / Wireless Telegraphy Act / Computer Misuse
+Act / PSD2 is the operator's responsibility.

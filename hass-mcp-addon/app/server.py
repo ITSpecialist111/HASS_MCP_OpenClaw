@@ -2245,3 +2245,11 @@ Analyze and suggest:
 - Label suggestions for grouping (e.g. 'energy', 'security', 'outdoor')
 - A clean naming convention for areas
 - Step-by-step instructions to implement the organization"""
+
+
+# ============================================================================
+# v2.0 - Register all expanded tool modules (~410 new tools across 39 modules)
+# ============================================================================
+from . import tools as _tools_pkg
+_tools_pkg.register_all(mcp)
+

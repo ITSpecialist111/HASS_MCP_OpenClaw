@@ -1,3 +1,46 @@
+# ---- Core MCP / HTTP ----
+mcp>=1.4.1
+httpx>=0.27.0
+uvicorn>=0.30.0
+starlette>=0.37.0
+anyio>=4.4.0
+aiohttp>=3.9
+
+# ---- v2.0 surface ----
+websockets>=12
+sqlalchemy>=2
+aiosqlite
+paramiko
+gitpython
+ripgrepy
+docker
+asyncio-mqtt
+pyyaml
+jinja2
+cryptography
+
+# ---- Part II (God Mode delta) ----
+pyserial            # §53 serial_open_send
+spidev; platform_machine == "armv7l" or platform_machine == "aarch64"  # §53 SPI
+onvif-zeep          # §55 ONVIF PTZ
+zeep                # transitive
+mcp>=1.4.1
+httpx>=0.27.0
+uvicorn>=0.30.0
+starlette>=0.37.0
+anyio>=4.4.0
+aiohttp>=3.9
+websockets>=12
+sqlalchemy>=2
+aiosqlite
+paramiko
+gitpython
+ripgrepy
+docker
+asyncio-mqtt
+pyyaml
+jinja2
+cryptography
 mcp>=1.4.1
 httpx>=0.27.0
 uvicorn>=0.30.0

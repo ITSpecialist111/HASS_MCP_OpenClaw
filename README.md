@@ -1,3 +1,9 @@
+# HASS MCP
+
+Home Assistant add-on exposing a Model Context Protocol (MCP) server with
+~470 tools over HTTP/SSE for full agentic control of HA.
+
+See [hass-mcp-addon/README.md](hass-mcp-addon/README.md) for details.
 # HASS MCP Server - Home Assistant Add-on
 
 A powerful **Model Context Protocol (MCP)** server that runs as a Home Assistant add-on, enabling AI assistants to interact with, query, and control your Home Assistant instance.

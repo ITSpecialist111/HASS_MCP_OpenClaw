@@ -106,8 +106,8 @@ async def handle_info(request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "name": "HASS-MCP",
-            "version": "1.0.0",
-            "description": "Home Assistant MCP Server Add-on",
+            "version": "2.1.0",
+            "description": "Home Assistant MCP Server Add-on (full-control + God Mode)",
             "transports": ["streamable-http", "sse"],
             "auth_methods": ["bearer_token", "x-api-key", "query_param"],
         }
