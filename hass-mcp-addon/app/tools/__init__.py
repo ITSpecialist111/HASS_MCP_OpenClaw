@@ -6,6 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Populated by register_all(): {module_name: [tool_name, ...]}
+MODULE_TOOLS: dict[str, list[str]] = {}
+
 _MODULES = [
     "raw",            # §41 — escape hatches first so others can lean on them
     "entities",       # §2
@@ -66,11 +69,21 @@ def register_all(mcp) -> int:
     count = 0
     for mod_name in _MODULES:
         try:
+            # Snapshot tool names before/after so we know what this module added
+            try:
+                before = set(mcp._tool_manager._tools.keys())  # type: ignore[attr-defined]
+            except Exception:
+                before = set()
             mod = importlib.import_module(f".{mod_name}", __name__)
             if hasattr(mod, "register"):
                 added = mod.register(mcp)
                 count += added or 0
                 logger.info("Registered %s (%s tools)", mod_name, added)
+            try:
+                after = set(mcp._tool_manager._tools.keys())  # type: ignore[attr-defined]
+                MODULE_TOOLS[mod_name] = sorted(after - before)
+            except Exception:
+                MODULE_TOOLS[mod_name] = []
         except Exception:
             logger.exception("Failed to register tool module %s", mod_name)
     return count
