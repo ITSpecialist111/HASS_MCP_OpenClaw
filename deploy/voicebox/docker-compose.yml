@@ -1,10 +1,37 @@
 # Voicebox — Docker stack for the Proxmox LXC
 #
+# ============================================================================
+# WARNING: the PUBLISHED IMAGE DISAGREES WITH BOTH THE DOCS AND THE SOURCE.
+# ============================================================================
+# Verified against the GHCR registry API on 2026-08-01:
+#
+#   ghcr.io/jamiepine/voicebox:latest   created 2026-02-03  (~6 months stale)
+#   ghcr.io/jamiepine/voicebox:dev      byte-identical to :latest
+#
+#   Published image config:  EXPOSE 8000, CMD uvicorn ... --port 8000,
+#                            User "" (ROOT), no ENTRYPOINT
+#   Upstream Dockerfile:     EXPOSE 17493, CMD ... --port 17493,
+#                            non-root `voicebox` user, gosu entrypoint
+#
+# Two consequences this file must work around:
+#
+#   a) The container listens on 8000, NOT 17493. Mapping 17493:17493 produces
+#      a container that starts, reports healthy-ish, and is unreachable.
+#   b) It runs as root, so HOME=/root. Mounting the model cache at
+#      /home/voicebox/.cache/huggingface (as the docs say) mounts a directory
+#      nothing ever writes to — models silently re-download on every recreate,
+#      which is multiple GB each time.
+#
+# Both are handled below via VOICEBOX_INTERNAL_PORT and an explicit HF_HOME.
+# If upstream republishes an image matching its Dockerfile, set
+# VOICEBOX_INTERNAL_PORT=17493 and nothing else needs to change.
+# ============================================================================
+#
 # Deliberate differences from the upstream example at docs.voicebox.sh/overview/docker:
 #
 #  1. Uses the prebuilt GHCR image instead of `build: .`. The docs still say
 #     "coming soon", but ghcr.io/jamiepine/voicebox:latest now exists
-#     (amd64, 4.38 GB compressed). No 20-minute source build needed.
+#     (amd64 + arm64, 4.38 GB uncompressed). No 20-minute source build needed.
 #
 #  2. Uses `mem_limit` / `cpus` instead of `deploy.resources.limits`.
 #     `deploy:` is a Swarm construct; relying on it for a plain `docker compose up`
@@ -29,16 +56,28 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${VOICEBOX_BIND:-0.0.0.0}:17493:17493"
+      # host:container — the container side is 8000 because that is what the
+      # published image actually listens on (see header). Host side stays
+      # 17493 so the LAN-facing port, HA package and MCP config are unaffected.
+      - "${VOICEBOX_BIND:-0.0.0.0}:17493:${VOICEBOX_INTERNAL_PORT:-8000}"
 
     environment:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       VOICEBOX_CORS_ORIGINS: "${VOICEBOX_CORS_ORIGINS:-}"
+      # Pin the HuggingFace cache to an explicit path instead of relying on
+      # $HOME. The published image runs as root, so the documented
+      # /home/voicebox/.cache/huggingface is never written to and every
+      # recreate re-downloads several GB of models.
+      HF_HOME: /cache/huggingface
+      # Documented Voicebox override; set to the same place for good measure.
+      VOICEBOX_MODELS_DIR: /cache/huggingface
+      # numba scribbles into $HOME too and fails noisily if it is read-only.
+      NUMBA_CACHE_DIR: /tmp/numba_cache
 
     volumes:
       - ./output:/app/data/generations
       - voicebox-data:/app/data
-      - huggingface-cache:/home/voicebox/.cache/huggingface
+      - huggingface-cache:/cache/huggingface
 
     # Hard ceiling. The LXC is sized larger than this on purpose so the
     # container hits its own limit before the LXC hits its limit, and the
@@ -53,12 +92,15 @@ services:
       # check exits 127, the container is marked unhealthy, and a perfectly
       # working deployment looks like a failure. Try the three tools any Python
       # ML image is likely to have before giving up.
+      #
+      # Note the port here is the INTERNAL one (8000), not the published 17493.
       test:
         - CMD-SHELL
         - >-
-          curl -fsS http://127.0.0.1:17493/health >/dev/null 2>&1
-          || wget -qO- http://127.0.0.1:17493/health >/dev/null 2>&1
-          || python3 -c 'import urllib.request;urllib.request.urlopen("http://127.0.0.1:17493/health",timeout=5)'
+          P=${VOICEBOX_INTERNAL_PORT:-8000};
+          curl -fsS http://127.0.0.1:$$P/health >/dev/null 2>&1
+          || wget -qO- http://127.0.0.1:$$P/health >/dev/null 2>&1
+          || python3 -c "import sys,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+sys.argv[1]+'/health',timeout=5)" $$P
           || exit 1
       interval: 30s
       timeout: 10s

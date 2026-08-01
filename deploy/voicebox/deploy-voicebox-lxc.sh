@@ -242,6 +242,11 @@ VOICEBOX_MEM_LIMIT=${CONTAINER_MEM_MB}m
 VOICEBOX_CPUS=$(awk "BEGIN{printf \"%.1f\", ${CT_CORES} - 1}")
 VOICEBOX_BIND=0.0.0.0
 LOG_LEVEL=info
+# The published image listens on 8000 despite the docs and Dockerfile saying
+# 17493 (verified against the GHCR registry API 2026-08-01; :latest and :dev
+# are the same 2026-02-03 build). Host-side stays 17493. If upstream ever
+# republishes an image matching its Dockerfile, change this to 17493.
+VOICEBOX_INTERNAL_PORT=8000
 EOF
 
 cat > "$STAGE_DIR/docker-compose.yml" <<'COMPOSE'
@@ -251,13 +256,19 @@ services:
     container_name: voicebox
     restart: unless-stopped
     ports:
-      - "${VOICEBOX_BIND:-0.0.0.0}:17493:17493"
+      - "${VOICEBOX_BIND:-0.0.0.0}:17493:${VOICEBOX_INTERNAL_PORT:-8000}"
     environment:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # The published image runs as root, so $HOME is /root and the documented
+      # /home/voicebox/.cache/huggingface is never written to. Pin the cache
+      # explicitly or several GB of models re-download on every recreate.
+      HF_HOME: /cache/huggingface
+      VOICEBOX_MODELS_DIR: /cache/huggingface
+      NUMBA_CACHE_DIR: /tmp/numba_cache
     volumes:
       - ./output:/app/data/generations
       - voicebox-data:/app/data
-      - huggingface-cache:/home/voicebox/.cache/huggingface
+      - huggingface-cache:/cache/huggingface
     mem_limit: ${VOICEBOX_MEM_LIMIT:-10g}
     memswap_limit: ${VOICEBOX_MEM_LIMIT:-10g}
     mem_reservation: 2g
@@ -270,9 +281,10 @@ services:
       test:
         - CMD-SHELL
         - >-
-          curl -fsS http://127.0.0.1:17493/health >/dev/null 2>&1
-          || wget -qO- http://127.0.0.1:17493/health >/dev/null 2>&1
-          || python3 -c 'import urllib.request;urllib.request.urlopen("http://127.0.0.1:17493/health",timeout=5)'
+          P=${VOICEBOX_INTERNAL_PORT:-8000};
+          curl -fsS http://127.0.0.1:$$P/health >/dev/null 2>&1
+          || wget -qO- http://127.0.0.1:$$P/health >/dev/null 2>&1
+          || python3 -c "import sys,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+sys.argv[1]+'/health',timeout=5)" $$P
           || exit 1
       interval: 30s
       timeout: 10s
