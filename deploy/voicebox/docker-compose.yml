@@ -1,0 +1,80 @@
+# Voicebox — Docker stack for the Proxmox LXC
+#
+# Deliberate differences from the upstream example at docs.voicebox.sh/overview/docker:
+#
+#  1. Uses the prebuilt GHCR image instead of `build: .`. The docs still say
+#     "coming soon", but ghcr.io/jamiepine/voicebox:latest now exists
+#     (amd64, 4.38 GB compressed). No 20-minute source build needed.
+#
+#  2. Uses `mem_limit` / `cpus` instead of `deploy.resources.limits`.
+#     `deploy:` is a Swarm construct; relying on it for a plain `docker compose up`
+#     is fragile. `mem_limit` is unambiguously enforced by the container runtime,
+#     which is the whole point of the RAM-safety requirement here.
+#
+#  3. `memswap_limit` == `mem_limit`, which disables swap for this container.
+#     Without it, an over-budget model load silently spills into swap and thrashes
+#     the node instead of failing fast. Fail fast is what we want.
+#
+#  4. Binds 0.0.0.0 rather than 127.0.0.1, because the whole point is that Home
+#     Assistant and MCP agents on the LAN can reach it. The LXC firewall is the
+#     control boundary instead. See README for hardening.
+#
+#  5. Log rotation is capped. ML containers are chatty and an unbounded json
+#     log will eventually eat the LXC rootfs.
+
+services:
+  voicebox:
+    image: ghcr.io/jamiepine/voicebox:${VOICEBOX_TAG:-latest}
+    container_name: voicebox
+    restart: unless-stopped
+
+    ports:
+      - "${VOICEBOX_BIND:-0.0.0.0}:17493:17493"
+
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      VOICEBOX_CORS_ORIGINS: "${VOICEBOX_CORS_ORIGINS:-}"
+
+    volumes:
+      - ./output:/app/data/generations
+      - voicebox-data:/app/data
+      - huggingface-cache:/home/voicebox/.cache/huggingface
+
+    # Hard ceiling. The LXC is sized larger than this on purpose so the
+    # container hits its own limit before the LXC hits its limit, and the
+    # LXC hits its limit before the Proxmox node feels anything.
+    mem_limit: ${VOICEBOX_MEM_LIMIT:-10g}
+    memswap_limit: ${VOICEBOX_MEM_LIMIT:-10g}
+    mem_reservation: 2g
+    cpus: ${VOICEBOX_CPUS:-3.0}
+
+    healthcheck:
+      # curl is not guaranteed to exist inside the image. If it is missing the
+      # check exits 127, the container is marked unhealthy, and a perfectly
+      # working deployment looks like a failure. Try the three tools any Python
+      # ML image is likely to have before giving up.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS http://127.0.0.1:17493/health >/dev/null 2>&1
+          || wget -qO- http://127.0.0.1:17493/health >/dev/null 2>&1
+          || python3 -c 'import urllib.request;urllib.request.urlopen("http://127.0.0.1:17493/health",timeout=5)'
+          || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Generous: first boot downloads multi-GB models from HuggingFace before
+      # the app is ready, and on a cold cache that is not fast.
+      start_period: 600s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    stop_grace_period: 30s
+
+volumes:
+  voicebox-data:
+  huggingface-cache:
