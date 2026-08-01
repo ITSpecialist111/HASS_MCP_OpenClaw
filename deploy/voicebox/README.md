@@ -168,14 +168,31 @@ Voicebox does both TTS (`/generate`) and STT (`/transcribe`). It does not work:
 
 The only add-on large enough to make room is Frigate, which is the NVR.
 
-### An add-on has no RAM ceiling
+### An add-on has no RAM ceiling — and is a preferred OOM victim
 
-There is a further problem specific to the add-on format. The Supervisor add-on
-schema has **no memory-limit option** — an add-on gets no cgroup cap and simply
-consumes until the OOM killer intervenes. The `mem_limit` / `memswap_limit`
-safety ceiling used in `docker-compose.yml` here **cannot be expressed as an
-add-on at all**. So the add-on route is not just tighter on RAM, it removes the
-one mechanism that would contain the damage.
+There is a further problem specific to the add-on format, confirmed against the
+Supervisor source rather than inferred from the docs:
+
+- `supervisor/apps/validate.py` contains **no memory-limit key**. The add-on
+  schema simply has nowhere to express one.
+- The container-create call in `supervisor/docker/app.py` (~L695-706) passes
+  `ulimits`, `cpu_rt_runtime`, `tmpfs` and others — and **no memory argument at
+  all**.
+
+So an add-on gets no cgroup cap and consumes until the OOM killer intervenes.
+The `mem_limit` / `memswap_limit` safety ceiling used in `docker-compose.yml`
+here **cannot be expressed as an add-on at all**.
+
+Worse, the same call hardcodes **`oom_score_adj=200`** on every add-on
+container. That is a *positive* bias: under memory pressure the kernel selects
+add-ons **before** other processes. So an oversized Voicebox would not merely
+fail on its own — it would raise the odds that the kernel kills **Frigate**, the
+NVR, instead. The failure mode is not "Voicebox doesn't start", it is "the
+cameras stopped recording and nothing obviously explains why".
+
+The add-on route is therefore not just tighter on RAM; it removes the one
+mechanism that would contain the damage, and biases the damage toward the other
+add-ons.
 
 An add-on is a Docker container on the same host. The wrapper changes packaging,
 not physics.
@@ -189,6 +206,14 @@ only, which costs it nothing.**
 > **Update after the full hardware audit:** the Proxmox host cannot host it
 > either — see the audit section above. This package is correct and ready, but
 > it needs a machine with more RAM than either existing box has.
+
+> **The add-on was built anyway**, on request, so it exists for the day the
+> hardware does: **https://github.com/ITSpecialist111/ha-addon-voicebox**
+>
+> It carries a RAM preflight that refuses to start when memory is short,
+> precisely because the Supervisor provides no cap and biases the OOM killer
+> toward add-ons. Installing it on the current OptiPlex is safe: it will decline
+> to start and explain why, rather than putting Frigate at risk.
 
 ---
 
