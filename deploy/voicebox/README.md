@@ -121,21 +121,64 @@ Then on Home Assistant: edit the IP in `voicebox.yaml.disabled`, drop it into
 ## Why not a Home Assistant add-on?
 
 This was the first thing checked, because it would have been the tidier answer.
-It is not viable. Measured on the HA host (192.168.68.57) on 2026-08-01:
+It is not viable. Re-measured on the HA host (192.168.68.57), 2026-08-01:
 
 | | |
 |---|---|
-| RAM | 15.9 GB total, **6.8 GB available** |
-| Swap | 4.0 GB total, **3.1 GB already in use** |
-| Load average | **7.58 / 8.58 / 8.60** on a 4-core i5-6500 |
-| Running add-ons | 19, totalling 7.76 GB |
-| Largest consumer | Frigate — 4673 MB @ 53% CPU |
+| RAM | 15901 MB total, **6482 MB available**, 142 MB free |
+| Swap | 4096 MB total, **3279 MB in use — only 817 MB left** |
+| `vm.swappiness` | **1** — the kernel only swaps here to avoid OOM |
+| Load average | 5.64 / 6.10 / 6.64 on a 4-core i5-6500 |
+| PSI CPU stall | **`some avg10=52.07%`** — something is waiting on CPU half the time |
+| Running add-ons | 19, totalling **8542 MB** (+ ~1 GB HA Core) |
+| Largest consumer | Frigate — **5557 MB @ 56.1% CPU** |
 
-Voicebox's floor is 8 GB. There is 6.8 GB available and the box is *already*
-swapping 3.1 GB at roughly twice its CPU capacity. Adding Voicebox would invoke
-the OOM killer, and the OOM killer would take Frigate, Zigbee2MQTT or HA Core
-with it. CPU-based TTS inference on an already-2x-oversubscribed 4-core CPU
-would also make the UI unusable while speaking.
+### The arithmetic is decisive
+
+```
+Voicebox minimum          8192 MB   (vendor's own floor for a single engine)
+Available without swap    6482 MB
+                        ---------
+Shortfall                 1710 MB
+Free swap                  817 MB
+                        ---------
+Nowhere to put            ~893 MB   -> OOM killer fires
+```
+
+The shortfall is *larger than the remaining swap*, so the allocation cannot be
+satisfied by any means. The OOM killer selects on RSS, so the victim would be
+Frigate (5557 MB) or HA Core.
+
+`swappiness=1` matters here: this kernel is configured to swap only as a last
+resort, and it has still been forced to push 3.2 GB out. That is real, sustained
+memory pressure, not lazy paging.
+
+### It cannot be freed up either
+
+The obvious idea is to reclaim RAM from the existing speech add-ons, since
+Voicebox does both TTS (`/generate`) and STT (`/transcribe`). It does not work:
+
+- **Whisper (812 MB)** is the `stt_engine` in **3 of 6** voice pipelines
+  (`Local Assistant`, `OpenAI`, `GLaDOS`).
+- **Piper (534 MB)** is the `tts_engine` in **2 of 6** (`Local Assistant`, `GLaDOS`).
+- Both are wired in over **Wyoming**. Voicebox speaks plain REST, so it cannot
+  drop into a pipeline's `stt_engine`/`tts_engine` slot as a replacement.
+- Even if both were removed anyway: `6482 + 1346 = 7828 MB` — **still 364 MB
+  short** of the floor, having broken the local voice pipelines to get there.
+
+The only add-on large enough to make room is Frigate, which is the NVR.
+
+### An add-on has no RAM ceiling
+
+There is a further problem specific to the add-on format. The Supervisor add-on
+schema has **no memory-limit option** — an add-on gets no cgroup cap and simply
+consumes until the OOM killer intervenes. The `mem_limit` / `memswap_limit`
+safety ceiling used in `docker-compose.yml` here **cannot be expressed as an
+add-on at all**. So the add-on route is not just tighter on RAM, it removes the
+one mechanism that would contain the damage.
+
+An add-on is a Docker container on the same host. The wrapper changes packaging,
+not physics.
 
 The HA host is also **bare metal, not a Proxmox guest** (`virtualization: ""`),
 so "put it in Proxmox" and "put it in HA" are genuinely different machines.
