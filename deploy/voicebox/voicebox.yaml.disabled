@@ -1,0 +1,168 @@
+# Home Assistant integration for Voicebox
+#
+#   Copy to:  /homeassistant/packages/voicebox.yaml
+#
+# This file ships as `voicebox.yaml.disabled` on purpose. Enable it only AFTER
+# the Voicebox LXC is up, otherwise the REST sensors fail every scan interval
+# and fill the log with warnings.
+#
+#   To enable:
+#     1. Replace 192.168.68.60 below with the LXC address that
+#        deploy-voicebox-lxc.sh printed.
+#     2. Rename this file to voicebox.yaml
+#     3. Developer Tools -> YAML -> Reload "All YAML configuration"
+#
+# Requires `homeassistant: packages: !include_dir_named packages` in
+# configuration.yaml — this instance already has that.
+#
+# Endpoints below come from the project's own OpenAPI spec
+# (docs/openapi.json in jamiepine/voicebox), not from the prose docs.
+# Note there is NO /api prefix: it is /health, /profiles, /generate.
+
+rest:
+  # /health returns: status, model_loaded, model_downloaded, model_size,
+  #                  gpu_available, vram_used_mb
+  - resource: "http://192.168.68.60:17493/health"
+    scan_interval: 60
+    timeout: 10
+    binary_sensor:
+      - name: Voicebox Online
+        unique_id: voicebox_online
+        device_class: connectivity
+        value_template: "{{ value_json.status is defined }}"
+        icon: mdi:account-voice
+
+      # The RAM-relevant one. A loaded TTS model is what makes the container
+      # heavy; when this is off, Voicebox is idling cheaply.
+      - name: Voicebox Model Loaded
+        unique_id: voicebox_model_loaded
+        device_class: running
+        value_template: "{{ value_json.model_loaded | default(false) }}"
+        icon: mdi:memory
+
+    sensor:
+      - name: Voicebox Status
+        unique_id: voicebox_status
+        value_template: "{{ value_json.status | default('unknown') }}"
+        icon: mdi:heart-pulse
+        json_attributes:
+          - model_loaded
+          - model_downloaded
+          - model_size
+          - gpu_available
+          - vram_used_mb
+
+      - name: Voicebox VRAM Used
+        unique_id: voicebox_vram_used
+        value_template: "{{ value_json.vram_used_mb | default(0) | round(0) }}"
+        unit_of_measurement: MB
+        device_class: data_size
+        state_class: measurement
+        icon: mdi:expansion-card
+
+  # /profiles returns a JSON *array* of {id, name, description, language, ...}
+  - resource: "http://192.168.68.60:17493/profiles"
+    scan_interval: 600
+    timeout: 15
+    sensor:
+      - name: Voicebox Profiles
+        unique_id: voicebox_profile_count
+        value_template: "{{ value_json | count }}"
+        unit_of_measurement: profiles
+        icon: mdi:account-multiple
+
+rest_command:
+  # POST /generate — requires profile_id and text.
+  # Returns {id, profile_id, text, language, audio_path, duration, created_at};
+  # fetch the audio afterwards from GET /audio/{id}.
+  voicebox_generate:
+    url: "http://192.168.68.60:17493/generate"
+    method: POST
+    content_type: "application/json"
+    timeout: 180
+    payload: >-
+      {
+        "profile_id": {{ profile_id | to_json }},
+        "text": {{ text | to_json }},
+        "language": {{ (language | default('en')) | to_json }}
+      }
+
+  # Frees the model from RAM. This is the main lever for keeping the LXC's
+  # memory footprint low between uses.
+  voicebox_unload_model:
+    url: "http://192.168.68.60:17493/models/unload"
+    method: POST
+    content_type: "application/json"
+    timeout: 30
+    payload: "{}"
+
+  voicebox_load_model:
+    url: "http://192.168.68.60:17493/models/load"
+    method: POST
+    content_type: "application/json"
+    timeout: 300
+    payload: "{}"
+
+template:
+  - binary_sensor:
+      # Mirrors the binary_sensor.network_core_healthy pattern already used in
+      # packages/network_control.yaml.
+      - name: Voicebox Healthy
+        unique_id: voicebox_healthy
+        device_class: connectivity
+        state: "{{ is_state('binary_sensor.voicebox_online', 'on') }}"
+        icon: >-
+          {{ 'mdi:account-voice' if this.state == 'on' else 'mdi:account-voice-off' }}
+
+automation:
+  # ── RAM hygiene ────────────────────────────────────────────────────────────
+  # A loaded TTS model is several GB. Voicebox has no idle-unload of its own,
+  # so left alone it holds that memory indefinitely after a single request.
+  # Dropping it after an hour keeps the LXC sitting near its floor rather than
+  # near its cap.
+  - id: voicebox_unload_idle_model
+    alias: "Voicebox: unload model when idle"
+    description: >-
+      Release the TTS model from RAM after 60 minutes loaded. The next request
+      reloads it automatically — slower first response, much lower steady-state
+      memory.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.voicebox_model_loaded
+        to: "on"
+        for:
+          minutes: 60
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.voicebox_online
+        state: "on"
+    actions:
+      - action: rest_command.voicebox_unload_model
+
+  - id: voicebox_down_alert
+    alias: "Voicebox: alert when offline"
+    description: >-
+      Warn if Voicebox has been unreachable for 15 minutes. Respects the
+      existing input_boolean.network_alerts_enabled mute used by the other
+      infrastructure alerts.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.voicebox_online
+        to: "off"
+        for:
+          minutes: 15
+    conditions:
+      - condition: state
+        entity_id: input_boolean.network_alerts_enabled
+        state: "on"
+    actions:
+      - action: persistent_notification.create
+        data:
+          title: Voicebox offline
+          message: >-
+            Voicebox has been unreachable for 15 minutes. On the Proxmox host:
+            `pct status <ctid>`, then
+            `pct exec <ctid> -- docker logs --tail 50 voicebox`.
+          notification_id: voicebox_offline
