@@ -10,11 +10,59 @@ drive it directly once it is running.
 
 ---
 
+## ⚠️ SUPERSEDED 2026-08-02 — it is running, as a Home Assistant add-on
+
+**Everything below this box is the 2026-08-01 audit, and its central verdict
+was wrong.** It is kept because the Proxmox measurements are still accurate and
+the reasoning is worth auditing. But do not act on its conclusion.
+
+Voicebox now runs on the Home Assistant host as add-on `93af30ca_voicebox`,
+from a separate repository:
+<https://github.com/ITSpecialist111/ha-addon-voicebox>
+
+### What the audit got wrong, and why
+
+It concluded that an add-on "cannot be satisfied by any means" because the
+8192 MB floor exceeded available RAM *plus* free swap. Two errors:
+
+1. **It measured a degraded machine, not a steady state.** The host had weeks
+   of uptime and 3.2 GB paged out. After a reboot the same workload showed
+   `MemAvailable` 7187 MB and **zero pages swapped out in 6.5 hours**. The
+   old figures were accumulated drift, not a requirement.
+2. **The 8192 MB floor was upstream's number for the wrong model.** Measured
+   here:
+
+   | model | peak RSS | load time | outcome |
+   |---|---|---|---|
+   | **0.6B** | **3693–4220 MB** | 10–26 s | works comfortably |
+   | 1.7B | ~8130 MB | — | OOM-killed twice |
+
+   Voicebox defaults every entry point to 1.7B, so the *default* action was the
+   one that could not fit. The add-on rewrites those defaults at build time and
+   guards the single function every model load passes through, so 1.7B can no
+   longer be loaded by accident. Verified on the live host: the exact
+   parameterless call that killed the box twice now loads 0.6B in 12 s.
+
+The RAM constraint was real. The conclusion drawn from it was not.
+
+### The Proxmox findings below still stand
+
+The Proxmox host genuinely is oversubscribed (17608 MB committed against
+15897 MB physical, both DIMM slots full at 16 GB maximum). Deploying there is
+still a bad idea, and `deploy-voicebox-lxc.sh` remains valid for a host with
+enough RAM. The one action still worth taking is
+`pct set 103 -memory 1536` on `hermesagent`, which reclaims 2560 MB of
+overcommit with no downtime.
+
+---
+
 ## Hardware audit — 2026-08-01 (measured, not assumed)
 
-**Verdict: neither available machine can run Voicebox, and the Proxmox host
-cannot be upgraded to fix it.** Details below. This section supersedes any
-"just run it" reading of the rest of this README.
+> **Superseded — see the box above.** Retained for the Proxmox numbers.
+
+**Verdict at the time: neither available machine can run Voicebox, and the
+Proxmox host cannot be upgraded to fix it.** The Proxmox half of that is still
+true; the Home Assistant half was disproved the following day.
 
 ### There is one Proxmox host, not two
 
@@ -119,6 +167,13 @@ Then on Home Assistant: edit the IP in `voicebox.yaml.disabled`, drop it into
 ---
 
 ## Why not a Home Assistant add-on?
+
+> **⚠️ This section is WRONG and is kept only as a record.** It *is* running as
+> a Home Assistant add-on. See the superseding box at the top of this file. The
+> memory figures below were taken from a machine with weeks of uptime and
+> 3.2 GB already paged out, and the 8192 MB floor they are compared against was
+> upstream's number for the 1.7B model — which the add-on now prevents loading.
+> Against the 0.6B model's measured ~4.2 GB peak, the host has ample room.
 
 This was the first thing checked, because it would have been the tidier answer.
 It is not viable. Re-measured on the HA host (192.168.68.57), 2026-08-01:
