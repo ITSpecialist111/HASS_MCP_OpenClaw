@@ -13,6 +13,7 @@ import os
 from typing import Any, Awaitable, Callable
 
 import websockets
+from websockets.protocol import State
 
 logger = logging.getLogger(__name__)
 
@@ -32,34 +33,60 @@ class HAWebSocket:
         self._reader_task: asyncio.Task | None = None
         self._connected = asyncio.Event()
 
+    @staticmethod
+    def _is_open(connection: Any) -> bool:
+        if connection is None:
+            return False
+        state = getattr(connection, "state", None)
+        if state is not None:
+            return state == State.OPEN
+        return not getattr(connection, "closed", True)
+
+    @staticmethod
+    async def _close_quietly(connection: Any) -> None:
+        try:
+            await connection.close()
+        except Exception:
+            logger.debug("WS candidate cleanup failed", exc_info=True)
+
     async def connect(self) -> None:
         async with self._lock:
-            if self._ws is not None and not getattr(self._ws, "closed", True):
+            if self._is_open(self._ws):
                 return
             backoff = 1.0
             while True:
+                connection: Any = None
                 try:
-                    self._ws = await websockets.connect(
+                    connection = await websockets.connect(
                         self.url, max_size=64 * 1024 * 1024, ping_interval=30
                     )
-                    auth_required = json.loads(await self._ws.recv())
+                    auth_required = json.loads(await connection.recv())
                     if auth_required.get("type") == "auth_required":
-                        await self._ws.send(json.dumps({"type": "auth", "access_token": self.token}))
-                        auth_resp = json.loads(await self._ws.recv())
+                        await connection.send(
+                            json.dumps({"type": "auth", "access_token": self.token})
+                        )
+                        auth_resp = json.loads(await connection.recv())
                         if auth_resp.get("type") != "auth_ok":
                             raise RuntimeError(f"WS auth failed: {auth_resp}")
+                    self._ws = connection
                     logger.info("WS connected to %s", self.url)
                     self._connected.set()
-                    self._reader_task = asyncio.create_task(self._reader())
+                    self._reader_task = asyncio.create_task(self._reader(connection))
                     return
+                except asyncio.CancelledError:
+                    if connection is not None:
+                        await self._close_quietly(connection)
+                    raise
                 except Exception as e:
+                    if connection is not None:
+                        await self._close_quietly(connection)
                     logger.warning("WS connect failed: %s; retrying in %.1fs", e, backoff)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30.0)
 
-    async def _reader(self) -> None:
+    async def _reader(self, connection: Any) -> None:
         try:
-            async for raw in self._ws:
+            async for raw in connection:
                 try:
                     msg = json.loads(raw)
                 except Exception:
@@ -82,14 +109,17 @@ class HAWebSocket:
         except Exception as e:
             logger.warning("WS reader exited: %s", e)
         finally:
-            self._connected.clear()
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(ConnectionError("WS closed"))
-            self._pending.clear()
-            self._ws = None
-            # Auto-reconnect
-            asyncio.create_task(self._reconnect_loop())
+            if self._ws is connection:
+                self._connected.clear()
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(ConnectionError("WS closed"))
+                self._pending.clear()
+                self._ws = None
+                if self._reader_task is asyncio.current_task():
+                    self._reader_task = None
+                # Auto-reconnect
+                asyncio.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self) -> None:
         await asyncio.sleep(2)
